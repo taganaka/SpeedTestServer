@@ -15,7 +15,8 @@
 void do_read(evutil_socket_t fd, short events, void *arg);
 void do_write(evutil_socket_t fd, short events, void *arg);
 void signal_cb(evutil_socket_t sig, short events, void *arg);
-void do_timeout(evutil_socket_t fd, short events, void *ctx);
+void do_timeout(evutil_socket_t fd, short events, void *arg);
+void server_stats_cb(evutil_socket_t sig, short events, void *arg);
 void run();
 
 server_context *server_ctx;
@@ -40,6 +41,7 @@ void do_read(evutil_socket_t fd, short events, void *ctx){
         if (result <= 0)
             break;
 
+        server_ctx->byte_received += result;
         c->buffer_len = (size_t)result;
         c->idle = now();
         if (c->request_upload_size_missing > 0){
@@ -74,8 +76,8 @@ void do_read(evutil_socket_t fd, short events, void *ctx){
                 sscanf(command, "UPLOAD %zu", &upload);
                 upload_request_handler(upload, c->buffer_len, ctx);
             } else {
-                printf("Command not understood");
                 error_handler(ctx);
+                syslog(LOG_INFO, "%s:%s Command not understood. Error no: %d", c->hoststr, c->portstr, c->errors_no);
             }
         }
 
@@ -96,9 +98,9 @@ void do_read(evutil_socket_t fd, short events, void *ctx){
         client_free(c);
         evutil_closesocket(fd);
     } else if (result < 0) {
-        if (errno == EAGAIN) // XXXX use evutil macro
+        if (errno == EAGAIN)
             return;
-        perror("recv");
+        syslog(LOG_ERR, "do_read error: %s. Disconnecting client", strerror(errno));
         client_free(c);
         evutil_closesocket(fd);
     }
@@ -123,6 +125,7 @@ void do_write(evutil_socket_t fd, short events, void *ctx){
         ssize_t result = send(fd, c->buffer, c->buffer_len, 0);
         c->idle = now();
         if (result == c->buffer_len){
+            server_ctx->byte_sent += result;
             event_del(c->write_event);
         } else {
             if (errno == EAGAIN) // XXXX use evutil macro
@@ -191,6 +194,16 @@ void do_accept(evutil_socket_t listener, short event, void *arg) {
     }
 }
 
+void server_stats_cb(evutil_socket_t sig, short events, void *arg){
+    syslog(LOG_INFO,
+           "Server info: MC: %zu, CC: %zu, BI: %zu, BO: %zu",
+           server_ctx->total_client,
+           server_ctx->current_connected_client,
+           server_ctx->byte_received,
+           server_ctx->byte_sent
+    );
+}
+
 void signal_cb(evutil_socket_t sig, short events, void *arg){
     struct event_base *base = arg;
     event_base_loopexit(base, NULL);
@@ -203,6 +216,7 @@ void run() {
     struct event_base *base;
     struct event *listener_event;
     struct event *signal_event;
+    struct event *server_stats_event;
 
     base = event_base_new();
     if (!base)
@@ -229,11 +243,18 @@ void run() {
         return;
     }
 
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
 
+    server_ctx->started_at = now();
+
+    server_stats_event = event_new(base, -1, EV_PERSIST, server_stats_cb, (void*)base);
     listener_event = event_new(base, listener, EV_READ|EV_PERSIST, do_accept, (void*)base);
     signal_event  = evsignal_new(base, SIGINT, signal_cb, (void*)base);
     event_add(signal_event, NULL);
     event_add(listener_event, NULL);
+    event_add(server_stats_event, &tv);
 
     syslog(LOG_INFO, "Ready to accept connections");
 

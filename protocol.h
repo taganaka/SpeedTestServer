@@ -47,6 +47,7 @@ typedef struct _client {
     char *buffer;
     size_t buffer_len;
     size_t buffer_size;
+    size_t initial_buffer_size;
     size_t request_download_size;
     bool download_started;
     size_t request_upload_size;
@@ -124,6 +125,7 @@ client* client_new(
     c->buffer = malloc(1024);
     c->buffer_len = 0;
     c->buffer_size = 1024;
+    c->initial_buffer_size = c->buffer_size;
     c->request_download_size = 0;
     c->download_started = false;
     c->request_upload_size = 0;
@@ -135,6 +137,7 @@ client* client_new(
 
 
 void client_free(client *c){
+    c->srv_ctx->current_connected_client--;
     event_del(c->write_event);
     event_del(c->read_event);
     event_del(c->timeout_event);
@@ -226,6 +229,12 @@ void upload_request_handler(const size_t upload, const size_t cmd_size, void *ct
     }
     c->request_upload_size = upload;
     c->request_upload_size_missing = c->request_upload_size - cmd_size;
+    // XXX Check
+    c->buffer = realloc(c->buffer, 8192);
+    if (c->buffer != NULL){
+        c->buffer_size = 8192;
+        c->buffer_len = 0;
+    }
     event_del(c->write_event);
 }
 
@@ -236,6 +245,14 @@ void upload_complete_handler(void *ctx){
 //        printf("Upload terminated OK!\n");
     } else {
         printf("Upload terminated KO!\n");
+    }
+    if (c->buffer_size != c->initial_buffer_size){
+        // XXX Check
+        c->buffer = realloc(c->buffer, c->initial_buffer_size);
+        if (c->buffer != NULL){
+            c->buffer_size = c->initial_buffer_size;
+            c->buffer_len = 0;
+        }
     }
     char *response = calloc(100, 1);
     snprintf(response, 100, "OK %zu %zu\n", c->request_upload_size, now());
@@ -257,6 +274,8 @@ void download_execute_handler(void *ctx){
         if (result != -1){
             c->download_started = true;
             c->request_download_size -= result;
+            c->srv_ctx->byte_sent += result;
+
             return;
         } else {
             printf("an error: %s\n", strerror(errno));
@@ -276,6 +295,7 @@ void download_execute_handler(void *ctx){
     if (missing == 0){
         result = send(wfd, "\n", 1, 0);
         if (result != -1){
+            c->srv_ctx->byte_sent += result;
             c->request_download_size = 0;
             c->download_started = false;
             event_del(c->write_event);
@@ -295,6 +315,7 @@ void download_execute_handler(void *ctx){
         size_t to_send = (missing >= c->srv_ctx->config->junk_data_len) ? c->srv_ctx->config->junk_data_len : missing;
         result = send(wfd, c->srv_ctx->config->junk_data, to_send, 0);
         if (result != -1){
+            c->srv_ctx->byte_sent += result;
             c->request_download_size -= result;
         } else {
             printf("an error: %s\n", strerror(errno));
