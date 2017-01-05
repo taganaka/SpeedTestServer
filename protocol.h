@@ -38,7 +38,7 @@ typedef struct _client {
     char hoststr[NI_MAXHOST];
     char portstr[NI_MAXSERV];
     size_t connected_at;
-    size_t iddle;
+    size_t idle;
     bool quitting;
     int errors_no;
     struct event *read_event;
@@ -115,7 +115,7 @@ client* client_new(
     struct timeval tv;
     tv.tv_sec = 5;
     tv.tv_usec = 0;
-    c->iddle = 0;
+    c->idle = 0;
     c->quitting = false;
     c->errors_no = 0;
     c->read_event = event_new(evb, fd, EV_READ|EV_PERSIST, read_cb, c);

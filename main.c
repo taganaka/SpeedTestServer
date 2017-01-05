@@ -15,12 +15,14 @@
 void do_read(evutil_socket_t fd, short events, void *arg);
 void do_write(evutil_socket_t fd, short events, void *arg);
 void signal_cb(evutil_socket_t sig, short events, void *arg);
+void do_timeout(evutil_socket_t fd, short events, void *ctx);
+void run();
 
 server_context *server_ctx;
 
 void do_read(evutil_socket_t fd, short events, void *ctx){
     client *c = (client *)ctx;
-    c->iddle = now();
+    c->idle = now();
     char *command = NULL;
 
     if (!client_get_state(c)){
@@ -39,7 +41,7 @@ void do_read(evutil_socket_t fd, short events, void *ctx){
             break;
 
         c->buffer_len = (size_t)result;
-        c->iddle = now();
+        c->idle = now();
         if (c->request_upload_size_missing > 0){
             c->request_upload_size_missing -= result;
             if (c->request_upload_size_missing > 0)
@@ -106,7 +108,7 @@ void do_read(evutil_socket_t fd, short events, void *ctx){
 
 void do_write(evutil_socket_t fd, short events, void *ctx){
     client *c = (client *)ctx;
-    c->iddle = now();
+    c->idle = now();
     if (!client_get_state(c)){
         client_free(c);
         evutil_closesocket(fd);
@@ -119,7 +121,7 @@ void do_write(evutil_socket_t fd, short events, void *ctx){
 
     if (c->buffer_len > 0){
         ssize_t result = send(fd, c->buffer, c->buffer_len, 0);
-        c->iddle = now();
+        c->idle = now();
         if (result == c->buffer_len){
             event_del(c->write_event);
         } else {
@@ -145,7 +147,7 @@ void do_timeout(evutil_socket_t fd, short events, void *ctx){
         evutil_closesocket(fd);
         return;
     }
-    size_t time_diff = (now() - c->iddle) / 1000;
+    size_t time_diff = (now() - c->idle) / 1000;
     if (time_diff >= c->srv_ctx->config->idle_timeout){
         syslog(LOG_INFO, "%s:%s Idle timeout [%zu]. ", c->hoststr, c->portstr, time_diff);
         client_free(c);
@@ -168,7 +170,7 @@ void do_accept(evutil_socket_t listener, short event, void *arg) {
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
         client *c = client_new(base, fd, server_ctx, do_read, do_write, do_timeout);
         c->connected_at = now();
-        c->iddle = c->connected_at;
+        c->idle = c->connected_at;
 
 
         getnameinfo((struct sockaddr *)&ss,
@@ -194,7 +196,6 @@ void signal_cb(evutil_socket_t sig, short events, void *arg){
     event_base_loopexit(base, NULL);
 
 }
-
 
 void run() {
     evutil_socket_t listener;
@@ -243,6 +244,7 @@ void run() {
 }
 
 int main(const int argc, char **argv) {
+
     openlog("SpeedTestServer", LOG_PID|LOG_CONS|LOG_PERROR, LOG_USER);
     protocol_config *speed_test_proto_config = protocol_config_new();
 
