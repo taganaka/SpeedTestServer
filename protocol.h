@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <syslog.h>
 
 #define PROTO_VER "2.4"
 #define PROTO_BANNER "unofficial_open_source_server"
@@ -89,8 +90,12 @@ protocol_config* protocol_config_new(){
         return NULL;
     }
 
+    const char *pseudo_rnd_data = "ABCDEFGH";
     cfg->junk_data_len = 2097152;
     cfg->junk_data = malloc(cfg->junk_data_len);
+//    for (size_t i = 0; i != 2097152/8; i += 8){
+//        memmove(cfg->junk_data + i, pseudo_rnd_data, 8);
+//    }
     memset(cfg->junk_data, 'A', cfg->junk_data_len);
     return cfg;
 }
@@ -270,18 +275,18 @@ void download_execute_handler(void *ctx){
     ssize_t result;
     int wfd = event_get_fd(c->write_event);
     if (!c->download_started){
-        result = send(wfd, payload, strlen(payload), 0);
-        if (result != -1){
+        size_t hdr_len = strlen(payload);
+        result = send(wfd, payload, hdr_len, 0);
+        if (result == hdr_len){
             c->download_started = true;
             c->request_download_size -= result;
             c->srv_ctx->byte_sent += result;
-
             return;
         } else {
-            printf("an error: %s\n", strerror(errno));
             if (errno == EAGAIN)
                 return;
             else {
+                syslog(LOG_ERR, "%s:%s send error on download_execute_handler: %s", c->hoststr, c->portstr, strerror(errno));
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;
@@ -294,17 +299,16 @@ void download_execute_handler(void *ctx){
 
     if (missing == 0){
         result = send(wfd, "\n", 1, 0);
-        if (result != -1){
+        if (result == 1){
             c->srv_ctx->byte_sent += result;
             c->request_download_size = 0;
             c->download_started = false;
             event_del(c->write_event);
         } else {
-
-            printf("an error: %s\n", strerror(errno));
             if (errno == EAGAIN)
                 return;
             else {
+                syslog(LOG_ERR, "%s:%s send error on download_execute_handler: %s", c->hoststr, c->portstr, strerror(errno));
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;
@@ -314,14 +318,14 @@ void download_execute_handler(void *ctx){
     } else {
         size_t to_send = (missing >= c->srv_ctx->config->junk_data_len) ? c->srv_ctx->config->junk_data_len : missing;
         result = send(wfd, c->srv_ctx->config->junk_data, to_send, 0);
-        if (result != -1){
+        if (result == to_send){
             c->srv_ctx->byte_sent += result;
             c->request_download_size -= result;
         } else {
-            printf("an error: %s\n", strerror(errno));
             if (errno == EAGAIN)
                 return;
             else {
+                syslog(LOG_ERR, "%s:%s send error on download_execute_handler: %s", c->hoststr, c->portstr, strerror(errno));
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;

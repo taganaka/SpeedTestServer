@@ -128,9 +128,8 @@ void do_write(evutil_socket_t fd, short events, void *ctx){
             server_ctx->byte_sent += result;
             event_del(c->write_event);
         } else {
-            if (errno == EAGAIN) // XXXX use evutil macro
+            if (errno == EAGAIN)
                 return;
-            perror("send");
             syslog(LOG_ERR, "do_write error: %s. Disconnecting client", strerror(errno));
             client_free(c);
             evutil_closesocket(fd);
@@ -195,16 +194,23 @@ void do_accept(evutil_socket_t listener, short event, void *arg) {
 }
 
 void server_stats_cb(evutil_socket_t sig, short events, void *arg){
+//    char b[255] = {0};
+//    struct tm * dt;
+//    time_t ts = (time_t)(server_ctx->started_at / 1000);
+//    dt = localtime(&ts);
+//    strftime(b, sizeof(b), "%m%d%H%M%y", dt);
     syslog(LOG_INFO,
            "Server info: MC: %zu, CC: %zu, BI: %zu, BO: %zu",
            server_ctx->total_client,
            server_ctx->current_connected_client,
            server_ctx->byte_received,
            server_ctx->byte_sent
+
     );
 }
 
 void signal_cb(evutil_socket_t sig, short events, void *arg){
+    syslog(LOG_INFO, "Shutting down");
     struct event_base *base = arg;
     event_base_loopexit(base, NULL);
 
@@ -232,14 +238,13 @@ void run() {
     int one = 1;
     setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
-
     if (bind(listener, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
-        perror("bind");
+        syslog(LOG_ERR, "Unable to bind: %s", strerror(errno));
         return;
     }
 
     if (listen(listener, server_ctx->config->backlog) < 0) {
-        perror("listen");
+        syslog(LOG_ERR, "Unable to listen: %s", strerror(errno));
         return;
     }
 
@@ -249,7 +254,7 @@ void run() {
 
     server_ctx->started_at = now();
 
-    server_stats_event = event_new(base, -1, EV_PERSIST, server_stats_cb, (void*)base);
+    server_stats_event = event_new(base, -1, EV_TIMEOUT|EV_PERSIST, server_stats_cb, (void*)base);
     listener_event = event_new(base, listener, EV_READ|EV_PERSIST, do_accept, (void*)base);
     signal_event  = evsignal_new(base, SIGINT, signal_cb, (void*)base);
     event_add(signal_event, NULL);
@@ -259,14 +264,18 @@ void run() {
     syslog(LOG_INFO, "Ready to accept connections");
 
     event_base_dispatch(base);
+    event_del(signal_event);
+    event_del(listener_event);
+    event_del(server_stats_event);
     shutdown(listener, SHUT_RD);
     close(listener);
 
 }
 
 int main(const int argc, char **argv) {
-
+//    setlogmask(LOG_UPTO(LOG_NOTICE));
     openlog("SpeedTestServer", LOG_PID|LOG_CONS|LOG_PERROR, LOG_USER);
+
     protocol_config *speed_test_proto_config = protocol_config_new();
 
     if (speed_test_proto_config == NULL){
