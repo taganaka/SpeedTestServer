@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <syslog.h>
 
 #define PROTO_VER "2.4"
 #define PROTO_BANNER "unofficial_open_source_server"
@@ -269,19 +270,20 @@ void download_execute_handler(void *ctx){
     const char *payload = "DOWNLOAD ";
     ssize_t result;
     int wfd = event_get_fd(c->write_event);
+    size_t hdr_len = strlen(payload);
     if (!c->download_started){
-        result = send(wfd, payload, strlen(payload), 0);
+        result = send(wfd, payload, hdr_len, 0);
         if (result != -1){
             c->download_started = true;
             c->request_download_size -= result;
             c->srv_ctx->byte_sent += result;
-
             return;
         } else {
             printf("an error: %s\n", strerror(errno));
             if (errno == EAGAIN)
                 return;
             else {
+                syslog(LOG_ERR, "download_execute_handler: %s", strerror(errno));
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;
@@ -294,17 +296,17 @@ void download_execute_handler(void *ctx){
 
     if (missing == 0){
         result = send(wfd, "\n", 1, 0);
-        if (result != -1){
+        if (result == 1){
             c->srv_ctx->byte_sent += result;
             c->request_download_size = 0;
             c->download_started = false;
             event_del(c->write_event);
         } else {
-
-            printf("an error: %s\n", strerror(errno));
+//            printf("an error: %s\n", strerror(errno));
             if (errno == EAGAIN)
                 return;
             else {
+                syslog(LOG_ERR, "download_execute_handler: %s", strerror(errno));
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;
@@ -315,10 +317,12 @@ void download_execute_handler(void *ctx){
         size_t to_send = (missing >= c->srv_ctx->config->junk_data_len) ? c->srv_ctx->config->junk_data_len : missing;
         result = send(wfd, c->srv_ctx->config->junk_data, to_send, 0);
         if (result != -1){
+            if (result != to_send)
+                syslog(LOG_INFO, "To send: %zu Sent: %zu", to_send, result);
             c->srv_ctx->byte_sent += result;
             c->request_download_size -= result;
         } else {
-            printf("an error: %s\n", strerror(errno));
+            printf("an error here: %s\n", strerror(errno));
             if (errno == EAGAIN)
                 return;
             else {

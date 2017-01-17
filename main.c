@@ -259,6 +259,7 @@ void run() {
     syslog(LOG_INFO, "Ready to accept connections");
 
     event_base_dispatch(base);
+
     shutdown(listener, SHUT_RD);
     close(listener);
 
