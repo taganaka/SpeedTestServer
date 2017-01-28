@@ -275,7 +275,7 @@ void run() {
 }
 
 int main(const int argc, char **argv) {
-    setlogmask(LOG_UPTO(LOG_NOTICE));
+    setlogmask(LOG_UPTO(LOG_INFO));
     openlog("SpeedTestServer", LOG_PID|LOG_CONS|LOG_PERROR, LOG_USER);
 
     protocol_config *speed_test_proto_config = protocol_config_new();
