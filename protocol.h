@@ -27,7 +27,7 @@ typedef struct _protocol_config {
 
 typedef struct _server_context {
     size_t started_at;
-    size_t total_client;
+    size_t total_client_served;
     size_t current_connected_client;
     size_t byte_sent;
     size_t byte_received;
@@ -72,7 +72,7 @@ server_context* server_context_new(const protocol_config *config){
     ctx->byte_received = 0;
     ctx->byte_sent = 0;
     ctx->current_connected_client = 0;
-    ctx->total_client = 0;
+    ctx->total_client_served = 0;
     ctx->started_at = now();
     return ctx;
 
@@ -91,12 +91,15 @@ protocol_config* protocol_config_new(){
     }
 
     const char *pseudo_rnd_data = "ABCDEFGH";
+    size_t pseudo_rnd_data_len = strlen(pseudo_rnd_data);
+    size_t rnd_data_idx = 0;
     cfg->junk_data_len = 2097152;
     cfg->junk_data = malloc(cfg->junk_data_len);
-//    for (size_t i = 0; i != 2097152/8; i += 8){
-//        memmove(cfg->junk_data + i, pseudo_rnd_data, 8);
-//    }
-    memset(cfg->junk_data, 'A', cfg->junk_data_len);
+    for (size_t i = 0; i < cfg->junk_data_len; i++){
+        cfg->junk_data[i] = pseudo_rnd_data[rnd_data_idx++];
+        if (rnd_data_idx == pseudo_rnd_data_len)
+            rnd_data_idx = 0;
+    }
     return cfg;
 }
 
@@ -246,11 +249,12 @@ void upload_request_handler(const size_t upload, const size_t cmd_size, void *ct
 
 void upload_complete_handler(void *ctx){
     client *c = (client *)ctx;
-    if (c->buffer[c->buffer_len - 1] == '\n'){
+    // XXX Check for command termination
+//    if (c->buffer[c->buffer_len - 1] == '\n'){
 //        printf("Upload terminated OK!\n");
-    } else {
-        printf("Upload terminated KO!\n");
-    }
+//    } else {
+//        printf("Upload terminated KO!\n");
+//    }
     if (c->buffer_size != c->initial_buffer_size){
         // XXX Check
         c->buffer = realloc(c->buffer, c->initial_buffer_size);
@@ -277,7 +281,7 @@ void download_execute_handler(void *ctx){
     if (!c->download_started){
         size_t hdr_len = strlen(payload);
         result = send(wfd, payload, hdr_len, 0);
-        if (result == hdr_len){
+        if (result != -1){
             c->download_started = true;
             c->request_download_size -= result;
             c->srv_ctx->byte_sent += result;
@@ -286,7 +290,12 @@ void download_execute_handler(void *ctx){
             if (errno == EAGAIN)
                 return;
             else {
-                syslog(LOG_ERR, "%s:%s send error on download_execute_handler: %s", c->hoststr, c->portstr, strerror(errno));
+                syslog(LOG_ERR,
+                       "%s:%s send error on download_execute_handler: %s",
+                       c->hoststr,
+                       c->portstr,
+                       strerror(errno)
+                );
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;
@@ -308,7 +317,12 @@ void download_execute_handler(void *ctx){
             if (errno == EAGAIN)
                 return;
             else {
-                syslog(LOG_ERR, "%s:%s send error on download_execute_handler: %s", c->hoststr, c->portstr, strerror(errno));
+                syslog(LOG_ERR,
+                       "%s:%s send error on download_execute_handler: %s",
+                       c->hoststr,
+                       c->portstr,
+                       strerror(errno)
+                );
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;
@@ -318,14 +332,19 @@ void download_execute_handler(void *ctx){
     } else {
         size_t to_send = (missing >= c->srv_ctx->config->junk_data_len) ? c->srv_ctx->config->junk_data_len : missing;
         result = send(wfd, c->srv_ctx->config->junk_data, to_send, 0);
-        if (result == to_send){
+        if (result != -1){
             c->srv_ctx->byte_sent += result;
             c->request_download_size -= result;
         } else {
             if (errno == EAGAIN)
                 return;
             else {
-                syslog(LOG_ERR, "%s:%s send error on download_execute_handler: %s", c->hoststr, c->portstr, strerror(errno));
+                syslog(LOG_ERR,
+                       "%s:%s send error on download_execute_handler: %s",
+                       c->hoststr,
+                       c->portstr,
+                       strerror(errno)
+                );
                 evutil_closesocket(wfd);
                 client_free(c);
                 return;

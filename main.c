@@ -57,7 +57,7 @@ void do_read(evutil_socket_t fd, short events, void *ctx){
         command = parse_command(ctx);
         if (command != NULL){
             // Command received, getting ready to send back some data
-//            syslog(LOG_DEBUG, "%s:%s CMD: %s", c->hoststr, c->portstr, command);
+            syslog(LOG_DEBUG, "%s:%s CMD: %s", c->hoststr, c->portstr, command);
             event_add(c->write_event, NULL);
             if (strstr(command, "PING") == command){
                 ping_handler(ctx);
@@ -149,8 +149,15 @@ void do_timeout(evutil_socket_t fd, short events, void *ctx){
         evutil_closesocket(fd);
         return;
     }
+
     size_t time_diff = (now() - c->idle) / 1000;
-    if (time_diff >= c->srv_ctx->config->idle_timeout){
+    size_t adjusted_idle_timeout = c->srv_ctx->config->idle_timeout;
+
+    if (c->request_upload_size_missing > 0 || c->download_started){
+        adjusted_idle_timeout += 20;
+    }
+
+    if (time_diff >= adjusted_idle_timeout){
         syslog(LOG_INFO, "%s:%s Idle timeout [%zu]. ", c->hoststr, c->portstr, time_diff);
         client_free(c);
         evutil_closesocket(fd);
@@ -174,7 +181,6 @@ void do_accept(evutil_socket_t listener, short event, void *arg) {
         c->connected_at = now();
         c->idle = c->connected_at;
 
-
         getnameinfo((struct sockaddr *)&ss,
                     socklen,
                     c->hoststr,
@@ -184,7 +190,7 @@ void do_accept(evutil_socket_t listener, short event, void *arg) {
                     NI_NUMERICHOST | NI_NUMERICSERV
         );
 
-        c->srv_ctx->total_client++;
+        c->srv_ctx->total_client_served++;
         c->srv_ctx->current_connected_client++;
 
         syslog(LOG_INFO, "New client: %s:%s", c->hoststr, c->portstr);
@@ -194,14 +200,10 @@ void do_accept(evutil_socket_t listener, short event, void *arg) {
 }
 
 void server_stats_cb(evutil_socket_t sig, short events, void *arg){
-//    char b[255] = {0};
-//    struct tm * dt;
-//    time_t ts = (time_t)(server_ctx->started_at / 1000);
-//    dt = localtime(&ts);
-//    strftime(b, sizeof(b), "%m%d%H%M%y", dt);
+
     syslog(LOG_INFO,
-           "Server info: MC: %zu, CC: %zu, BI: %zu, BO: %zu",
-           server_ctx->total_client,
+           "Server info: TC: %zu, CC: %zu, BI: %zu, BO: %zu",
+           server_ctx->total_client_served,
            server_ctx->current_connected_client,
            server_ctx->byte_received,
            server_ctx->byte_sent
@@ -213,7 +215,6 @@ void signal_cb(evutil_socket_t sig, short events, void *arg){
     syslog(LOG_INFO, "Shutting down");
     struct event_base *base = arg;
     event_base_loopexit(base, NULL);
-
 }
 
 void run() {
@@ -255,8 +256,9 @@ void run() {
     server_ctx->started_at = now();
 
     server_stats_event = event_new(base, -1, EV_TIMEOUT|EV_PERSIST, server_stats_cb, (void*)base);
-    listener_event = event_new(base, listener, EV_READ|EV_PERSIST, do_accept, (void*)base);
-    signal_event  = evsignal_new(base, SIGINT, signal_cb, (void*)base);
+    listener_event     = event_new(base, listener, EV_READ|EV_PERSIST, do_accept, (void*)base);
+    signal_event       = evsignal_new(base, SIGINT, signal_cb, (void*)base);
+
     event_add(signal_event, NULL);
     event_add(listener_event, NULL);
     event_add(server_stats_event, &tv);
@@ -273,7 +275,7 @@ void run() {
 }
 
 int main(const int argc, char **argv) {
-//    setlogmask(LOG_UPTO(LOG_NOTICE));
+    setlogmask(LOG_UPTO(LOG_NOTICE));
     openlog("SpeedTestServer", LOG_PID|LOG_CONS|LOG_PERROR, LOG_USER);
 
     protocol_config *speed_test_proto_config = protocol_config_new();
