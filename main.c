@@ -3,7 +3,6 @@
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <event2/listener.h>
-#include <assert.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -67,6 +66,8 @@ void do_read(evutil_socket_t fd, short events, void *ctx){
                 getip_handler(ctx);
             } else if (strstr(command, "QUIT") == command) {
                 quit_handler(ctx);
+            } else if (strstr(command, "<policy-file-request/>") == command){
+                policy_file_request_handler(ctx);
             } else if (strstr(command, "DOWNLOAD") == command){
                 size_t download = 0;
                 sscanf(command, "DOWNLOAD %zu", &download);
@@ -127,6 +128,10 @@ void do_write(evutil_socket_t fd, short events, void *ctx){
         if (result == c->buffer_len){
             server_ctx->byte_sent += result;
             event_del(c->write_event);
+            if (c->flush_and_quit){
+                client_free(c);
+                evutil_closesocket(fd);
+            }
         } else {
             if (errno == EAGAIN)
                 return;
@@ -168,6 +173,8 @@ void do_accept(evutil_socket_t listener, short event, void *arg) {
     struct event_base *base = arg;
     struct sockaddr_storage ss;
     socklen_t socklen = sizeof(ss);
+
+
 
     int fd = accept(listener, (struct sockaddr*)&ss, &socklen);
     if (fd < 0) {

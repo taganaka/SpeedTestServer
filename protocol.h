@@ -41,6 +41,7 @@ typedef struct _client {
     size_t connected_at;
     size_t idle;
     bool quitting;
+    bool flush_and_quit;
     int errors_no;
     struct event *read_event;
     struct event *write_event;
@@ -126,6 +127,7 @@ client* client_new(
     tv.tv_usec = 0;
     c->idle = 0;
     c->quitting = false;
+    c->flush_and_quit = false;
     c->errors_no = 0;
     c->read_event = event_new(evb, fd, EV_READ|EV_PERSIST, read_cb, c);
     c->write_event = event_new(evb, fd, EV_WRITE|EV_PERSIST, write_cb, c);
@@ -167,6 +169,9 @@ char* parse_command(void *ctx){
     char *command = calloc(c->buffer_size, 1);
     // A command should be found between the first c->buffer_len bytes
     char *pch = (char*) memchr(c->buffer, '\n', c->buffer_len);
+    if (pch == NULL )
+        pch = (char*) memchr(c->buffer, '\0', c->buffer_len);
+
     if (pch != NULL){
         memmove(command, c->buffer, pch - c->buffer);
         return command;
@@ -353,6 +358,19 @@ void download_execute_handler(void *ctx){
         }
     }
 
+}
+
+void policy_file_request_handler(void *ctx){
+    client *c = (client *)ctx;
+    const char *payload = "<cross-domain-policy>\n"
+            "<allow-access-from domain=\"*\" to-ports=\"%d\"/>\n"
+            "</cross-domain-policy>\n";
+    char *response = calloc(255, 1);
+    snprintf(response, 255, payload, c->srv_ctx->config->tcp_port);
+    memmove(c->buffer, response, strlen(response));
+    c->buffer_len = strlen(response);
+    c->flush_and_quit = true;
+    free(response);
 }
 
 #endif //SPEEDTESTSERVER_PROTOCOL_H
